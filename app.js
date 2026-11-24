@@ -1,122 +1,171 @@
-const storeKey = "smartbiz-imena-demo-v1";
-const initialData = {
-  products: [
-    {id:1,name:"Bottled water",category:"Beverages",price:500,stock:48},
-    {id:2,name:"Notebook",category:"Stationery",price:1500,stock:8},
-    {id:3,name:"Coffee",category:"Beverages",price:2500,stock:4}
-  ],
-  sales: [],
-  customers: [],
-  expenses: []
-};
-let data;
-try { data = JSON.parse(localStorage.getItem(storeKey)) || structuredClone(initialData); }
-catch { data = structuredClone(initialData); }
-let currentPage = "overview";
-let activeForm = "";
+const SUPABASE_URL="https://qgnnzybeafqcsaqronpl.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY="sb_publishable_tVpz1JO5ix1EHu1kFqm9Bw_algtXmsu";
+const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+let sessionUser=null,activeBusiness=null,currentPage="overview",activeForm="",authMode="signin";
+let data={products:[],sales:[],customers:[],expenses:[]};
+const $=id=>document.getElementById(id);
+const money=n=>"RWF "+Number(n||0).toLocaleString("en-US");
+const total=a=>a.reduce((s,x)=>s+Number(x.amount||0),0);
+const dateText=v=>v?new Date(v).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}):"—";
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const msg=(id,s,ok=false)=>{const e=$(id);if(e){e.textContent=s;e.style.color=ok?"#21835f":"#b45309";}};
+const toast=s=>{const e=$("toast");e.textContent=s;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2800);};
+$("year").textContent=new Date().getFullYear();
+$("todayLabel").textContent=new Date().toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
 
-const money = n => "RWF " + Number(n || 0).toLocaleString("en-US");
-const save = () => localStorage.setItem(storeKey, JSON.stringify(data));
-const byId = id => document.getElementById(id);
-const dateText = value => new Date(value).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
-const total = list => list.reduce((sum,item)=>sum+Number(item.amount||0),0);
-const lowStock = () => data.products.filter(p=>p.stock<=10);
-byId("todayLabel").textContent = new Date().toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
-byId("year").textContent = new Date().getFullYear();
-
-function renderOverview(){
-  byId("totalSales").textContent=money(total(data.sales));
-  byId("totalOrders").textContent=data.sales.length;
-  byId("totalProducts").textContent=data.products.length;
-  byId("totalExpenses").textContent=money(total(data.expenses));
-  byId("lowStockText").textContent=lowStock().length;
-  byId("salesCount").textContent=data.sales.length;
-  const tbody=byId("recentSales"); tbody.innerHTML="";
-  [...data.sales].slice(-5).reverse().forEach(s=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML=`<td>${s.ref}</td><td>${dateText(s.date)}</td><td>${escapeHtml(s.item)}</td><td>${escapeHtml(s.payment)}</td><td class="align-right">${money(s.amount)}</td>`;
-    tbody.appendChild(tr);
-  });
-  byId("salesEmpty").classList.toggle("hidden",data.sales.length>0);
-  const stock=byId("stockSummary"); stock.innerHTML="";
-  const groups=[{label:"In stock",count:data.products.filter(p=>p.stock>10).length,cls:""},{label:"Low stock",count:lowStock().length,cls:"warning"},{label:"Out of stock",count:data.products.filter(p=>p.stock===0).length,cls:"danger"}];
-  groups.forEach(g=>{const row=document.createElement("div");row.innerHTML=`<div class="stock-line-head"><span>${g.label}</span><strong>${g.count} products</strong></div><div class="progress"><span class="${g.cls}" style="width:${data.products.length?Math.max(3,g.count/data.products.length*100):0}%"></span></div>`;stock.appendChild(row)});
-  drawChart();
+function authModeSet(mode){
+ authMode=mode;$("authTitle").textContent=mode==="signup"?"Create your account":"Welcome back";
+ $("authSubtitle").textContent=mode==="signup"?"Start managing your business with Smart Biz.":"Sign in to manage your business securely.";
+ $("authSubmit").textContent=mode==="signup"?"Create account":"Sign in";
+ $("authPassword").autocomplete=mode==="signup"?"new-password":"current-password";
+ $("authToggle").textContent=mode==="signup"?"Already have an account? Sign in":"New to Smart Biz? Create an account";msg("authMessage","");
 }
+function showAuth(){$("appShell").classList.add("hidden");$("setupScreen").classList.add("hidden");$("authScreen").classList.remove("hidden");}
+function showSetup(){$("appShell").classList.add("hidden");$("authScreen").classList.add("hidden");$("setupScreen").classList.remove("hidden");}
+async function startWorkspace(user){
+ sessionUser=user;
+ const m=await db.from("business_members").select("business_id,role").eq("user_id",user.id);
+ if(m.error)throw m.error;
+ if(!m.data?.length){showSetup();return;}
+ const b=await db.from("businesses").select("*").in("id",m.data.map(x=>x.business_id));
+ if(b.error)throw b.error;
+ if(!b.data?.length){showSetup();return;}
+ activeBusiness=b.data[0];
+ $("appShell").classList.remove("hidden");$("authScreen").classList.add("hidden");$("setupScreen").classList.add("hidden");
+ document.querySelector(".profile strong").textContent=activeBusiness.name;
+ document.querySelector(".profile small").textContent=(m.data.find(x=>x.business_id===activeBusiness.id)?.role||"member")+" workspace";
+ await loadData();
+}
+async function loadData(){
+ const id=activeBusiness.id;
+ const q=await Promise.all([
+  db.from("products").select("*").eq("business_id",id).eq("is_active",true).order("name"),
+  db.from("sales").select("*").eq("business_id",id).order("sold_at",{ascending:false}),
+  db.from("customers").select("*").eq("business_id",id).order("name"),
+  db.from("expenses").select("*").eq("business_id",id).order("expense_date",{ascending:false}),
+  db.from("sale_items").select("*").eq("business_id",id)
+ ]);
+ for(const x of q)if(x.error)throw x.error;
+ const items=q[4].data||[];
+ data.products=(q[0].data||[]).map(p=>({id:p.id,name:p.name,category:p.category||"",price:+p.selling_price,stock:+p.stock_quantity,threshold:+p.low_stock_threshold}));
+ data.sales=(q[1].data||[]).map(s=>({id:s.id,ref:s.receipt_number,date:s.sold_at,item:items.filter(i=>i.sale_id===s.id).map(i=>i.item_name+" × "+i.quantity).join(", ")||"Sale",amount:+s.total,payment:s.payment_method}));
+ data.customers=(q[2].data||[]).map(c=>({id:c.id,name:c.name,phone:c.phone||"",email:c.email||""}));
+ data.expenses=(q[3].data||[]).map(e=>({id:e.id,date:e.expense_date,category:e.category||"",description:e.title,amount:+e.amount}));
+ renderOverview();if(currentPage!=="overview")renderSection();
+}
+function lowStock(){return data.products.filter(p=>p.stock<=p.threshold);}
 function drawChart(){
- const chart=byId("salesChart"); if(!data.sales.length){chart.innerHTML='<div class="chart-empty">Your sales chart will appear here as you record transactions.</div>';return}
+ const chart=$("salesChart");if(!data.sales.length){chart.innerHTML='<div class="chart-empty">Your sales chart will appear here as you record transactions.</div>';return;}
  const buckets=Array(7).fill(0),labels=[];
  for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);labels.push(d.toLocaleDateString("en",{weekday:"short"}));}
- data.sales.forEach(s=>{const d=new Date(s.date);const diff=Math.floor((new Date().setHours(0,0,0,0)-new Date(d).setHours(0,0,0,0))/86400000);if(diff>=0&&diff<7)buckets[6-diff]+=Number(s.amount)});
+ data.sales.forEach(s=>{const d=new Date(s.date),diff=Math.floor((new Date().setHours(0,0,0,0)-new Date(d).setHours(0,0,0,0))/86400000);if(diff>=0&&diff<7)buckets[6-diff]+=s.amount;});
  const max=Math.max(...buckets,1);
- chart.innerHTML='<div class="bar-set">'+buckets.map((v,i)=>`<div class="bar-column"><div class="bar" title="${money(v)}" style="height:${Math.max(v?5:0,v/max*78)}%"></div><span class="bar-label">${labels[i]}</span></div>`).join("")+'</div>';
+ chart.innerHTML='<div class="bar-set">'+buckets.map((v,i)=>'<div class="bar-column"><div class="bar" title="'+money(v)+'" style="height:'+Math.max(v?5:0,v/max*78)+'%"></div><span class="bar-label">'+labels[i]+'</span></div>').join("")+'</div>';
 }
-function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-const pageInfo={
- overview:["Overview","Here’s what’s happening with your business today."],
- sales:["Sales","Track transactions and keep your sales records organized."],
- inventory:["Inventory","Manage products, prices and available stock."],
- customers:["Customers","Keep useful customer details in one place."],
- expenses:["Expenses","Record and review your business spending."],
- reports:["Reports","A simple snapshot of your business performance."]
-};
+function renderOverview(){
+ $("totalSales").textContent=money(total(data.sales));$("totalOrders").textContent=data.sales.length;
+ $("totalProducts").textContent=data.products.length;$("totalExpenses").textContent=money(total(data.expenses));
+ $("lowStockText").textContent=lowStock().length;$("salesCount").textContent=data.sales.length;
+ const body=$("recentSales");body.innerHTML="";
+ data.sales.slice(0,5).forEach(s=>{const tr=document.createElement("tr");tr.innerHTML="<td>"+esc(s.ref)+"</td><td>"+dateText(s.date)+"</td><td>"+esc(s.item)+"</td><td>"+esc(s.payment)+"</td><td class=\"align-right\">"+money(s.amount)+"</td>";body.appendChild(tr);});
+ $("salesEmpty").classList.toggle("hidden",data.sales.length>0);
+ const stock=$("stockSummary");stock.innerHTML="";
+ [{label:"In stock",count:data.products.filter(p=>p.stock>p.threshold).length,cls:""},{label:"Low stock",count:lowStock().filter(p=>p.stock>0).length,cls:"warning"},{label:"Out of stock",count:data.products.filter(p=>p.stock===0).length,cls:"danger"}].forEach(g=>{const row=document.createElement("div");row.innerHTML='<div class="stock-line-head"><span>'+g.label+'</span><strong>'+g.count+' products</strong></div><div class="progress"><span class="'+g.cls+'" style="width:'+(data.products.length?Math.max(3,g.count/data.products.length*100):0)+'%"></span></div>';stock.appendChild(row);});
+ drawChart();
+}
+const pages={overview:["Overview","Here’s what’s happening with your business today."],sales:["Sales","Track transactions and keep your sales records organized."],inventory:["Inventory","Manage products, prices and available stock."],customers:["Customers","Keep useful customer details in one place."],expenses:["Expenses","Record and review your business spending."],reports:["Reports","A simple snapshot of your business performance."]};
 function navigate(page){
  currentPage=page;document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
- byId("pageCrumb").textContent=pageInfo[page][0];byId("pageTitle").innerHTML=pageInfo[page][0]+(page==="overview"?' <span class="wave">✦</span>':'');byId("pageSubtitle").textContent=pageInfo[page][1];
- byId("overviewPage").classList.toggle("hidden",page!=="overview");byId("genericPage").classList.toggle("hidden",page==="overview");
- if(page!=="overview")renderSection();byId("sidebar").classList.remove("open");
+ $("pageCrumb").textContent=pages[page][0];$("pageTitle").innerHTML=pages[page][0]+(page==="overview"?' <span class="wave">✦</span>':"");
+ $("pageSubtitle").textContent=pages[page][1];$("overviewPage").classList.toggle("hidden",page!=="overview");$("genericPage").classList.toggle("hidden",page==="overview");
+ if(page!=="overview")renderSection();$("sidebar").classList.remove("open");
 }
 function renderSection(){
  const titles={sales:"Sales transactions",inventory:"Product inventory",customers:"Customer directory",expenses:"Expense records",reports:"Business summary"};
- const descriptions={sales:"Every sale recorded in this workspace.",inventory:"Update quantities and product prices.",customers:"Customers added when you record or enter their details.",expenses:"Track the costs of running your business.",reports:"Your current recorded totals. Export your records whenever you need."};
- byId("sectionTitle").textContent=titles[currentPage];byId("sectionDescription").textContent=descriptions[currentPage];
- byId("sectionAddBtn").classList.toggle("hidden",currentPage==="reports");
- const content=byId("sectionContent");
- if(currentPage==="reports"){
-  content.innerHTML=`<div class="metric-grid"><article class="metric-card"><div class="metric-top">Revenue</div><div class="metric-value">${money(total(data.sales))}</div></article><article class="metric-card"><div class="metric-top">Expenses</div><div class="metric-value">${money(total(data.expenses))}</div></article><article class="metric-card"><div class="metric-top">Net (before other costs)</div><div class="metric-value">${money(total(data.sales)-total(data.expenses))}</div></article><article class="metric-card"><div class="metric-top">Transactions</div><div class="metric-value">${data.sales.length}</div></article></div><p style="color:#8994a6;font-size:11px">Figures are calculated from records entered in this browser demo.</p>`;return;
- }
- const search=`<div class="data-toolbar"><input class="search-input" id="tableSearch" placeholder="Search records..." /></div>`;
- let rows=[],heads=[];
- if(currentPage==="inventory"){heads=["PRODUCT","CATEGORY","PRICE","STOCK STATUS","QUANTITY"];rows=data.products.map(p=>[p.name,p.category,money(p.price),p.stock<=10?'<span class="status low">Low stock</span>':'<span class="status">In stock</span>',p.stock])}
- if(currentPage==="sales"){heads=["REFERENCE","DATE","ITEM","PAYMENT","AMOUNT"];rows=data.sales.map(s=>[s.ref,dateText(s.date),s.item,s.payment,money(s.amount)])}
- if(currentPage==="customers"){heads=["NAME","PHONE","EMAIL","TOTAL SPENT"];rows=data.customers.map(c=>[c.name,c.phone||"—",c.email||"—",money(c.spent||0)])}
- if(currentPage==="expenses"){heads=["DATE","CATEGORY","DESCRIPTION","AMOUNT"];rows=data.expenses.map(e=>[dateText(e.date),e.category,e.description,money(e.amount)])}
- content.innerHTML=search+(rows.length?`<div class="table-scroll"><table><thead><tr>${heads.map(h=>'<th>'+h+'</th>').join("")}</tr></thead><tbody>${rows.map(r=>'<tr>'+r.map(v=>'<td>'+v+'</td>').join("")+'</tr>').join("")}</tbody></table></div>`:'<div class="empty-box"><strong>No records yet</strong>Your records will appear here when you add them.</div>');
- const input=byId("tableSearch");if(input)input.addEventListener("input",()=>{const q=input.value.toLowerCase();content.querySelectorAll("tbody tr").forEach(tr=>tr.classList.toggle("hidden",!tr.textContent.toLowerCase().includes(q)))});
+ const desc={sales:"Every sale recorded in this workspace.",inventory:"Manage products, prices and available stock.",customers:"Your saved customer directory.",expenses:"Track the costs of running your business.",reports:"Totals calculated from your saved business records."};
+ $("sectionTitle").textContent=titles[currentPage];$("sectionDescription").textContent=desc[currentPage];$("sectionAddBtn").classList.toggle("hidden",currentPage==="reports");
+ const c=$("sectionContent");
+ if(currentPage==="reports"){c.innerHTML='<div class="metric-grid"><article class="metric-card"><div class="metric-top">Revenue</div><div class="metric-value">'+money(total(data.sales))+'</div></article><article class="metric-card"><div class="metric-top">Expenses</div><div class="metric-value">'+money(total(data.expenses))+'</div></article><article class="metric-card"><div class="metric-top">Net (before other costs)</div><div class="metric-value">'+money(total(data.sales)-total(data.expenses))+'</div></article><article class="metric-card"><div class="metric-top">Transactions</div><div class="metric-value">'+data.sales.length+'</div></article></div><p style="color:#8994a6;font-size:11px">Figures are loaded from your online business records.</p>';return;}
+ let heads=[],rows=[];
+ if(currentPage==="inventory"){heads=["PRODUCT","CATEGORY","PRICE","STOCK STATUS","QUANTITY"];rows=data.products.map(p=>[esc(p.name),esc(p.category),money(p.price),p.stock<=p.threshold?'<span class="status low">Low stock</span>':'<span class="status">In stock</span>',p.stock]);}
+ if(currentPage==="sales"){heads=["REFERENCE","DATE","ITEM","PAYMENT","AMOUNT"];rows=data.sales.map(s=>[esc(s.ref),dateText(s.date),esc(s.item),esc(s.payment),money(s.amount)]);}
+ if(currentPage==="customers"){heads=["NAME","PHONE","EMAIL"];rows=data.customers.map(x=>[esc(x.name),esc(x.phone),esc(x.email)]);}
+ if(currentPage==="expenses"){heads=["DATE","CATEGORY","DESCRIPTION","AMOUNT"];rows=data.expenses.map(x=>[dateText(x.date),esc(x.category),esc(x.description),money(x.amount)]);}
+ c.innerHTML='<div class="data-toolbar"><input class="search-input" id="tableSearch" placeholder="Search records..." /></div>'+(rows.length?'<div class="table-scroll"><table><thead><tr>'+heads.map(h=>"<th>"+h+"</th>").join("")+'</tr></thead><tbody>'+rows.map(r=>"<tr>"+r.map(v=>"<td>"+v+"</td>").join("")+"</tr>").join("")+"</tbody></table></div>":'<div class="empty-box"><strong>No records yet</strong>Your saved records will appear here when you add them.</div>');
+ const search=$("tableSearch");if(search)search.addEventListener("input",()=>{const q=search.value.toLowerCase();c.querySelectorAll("tbody tr").forEach(tr=>tr.classList.toggle("hidden",!tr.textContent.toLowerCase().includes(q)));});
 }
 function openModal(type){
- activeForm=type;const specs={
- sale:{title:"Record a sale",fields:[["item","Product / item","text","e.g. Bottled water"],["amount","Amount (RWF)","number","e.g. 500"],["payment","Payment method","select",["Cash","Mobile Money","Bank transfer","Card"]],["customer","Customer name (optional)","text","Customer name"]]},
- product:{title:"Add a product",fields:[["name","Product name","text","e.g. Sugar"],["category","Category","text","e.g. Groceries"],["price","Selling price (RWF)","number","e.g. 2000"],["stock","Opening quantity","number","e.g. 20"]]},
+ activeForm=type;
+ const specs={
+ sale:{title:"Record a sale",fields:[["item","Product / item","text","e.g. Bottled water"],["quantity","Quantity","number","e.g. 1"],["amount","Total amount (RWF)","number","e.g. 500"],["payment","Payment method","select",["cash","mobile_money","bank_transfer","card","credit","other"]],["customer","Customer name (optional)","text","Customer name"]]},
+ product:{title:"Add a product",fields:[["name","Product name","text","e.g. Sugar"],["category","Category","text","e.g. Groceries"],["price","Selling price (RWF)","number","e.g. 2000"],["cost","Purchase price (RWF)","number","e.g. 1500"],["stock","Opening quantity","number","e.g. 20"],["threshold","Low stock alert quantity","number","e.g. 5"]]},
  customer:{title:"Add a customer",fields:[["name","Customer name","text","Full name"],["phone","Phone number","tel","+250..."],["email","Email (optional)","email","name@example.com"]]},
  expense:{title:"Record an expense",fields:[["category","Category","text","e.g. Transport"],["description","Description","text","What was it for?"],["amount","Amount (RWF)","number","e.g. 5000"]]}
  };
- const spec=specs[type];byId("modalTitle").textContent=spec.title;byId("formFields").innerHTML=spec.fields.map(([name,label,kind,placeholder])=>`<div class="field ${name==="description"?"full":""}"><label for="f_${name}">${label}</label>${kind==="select"?`<select id="f_${name}" name="${name}">${placeholder.map(o=>`<option>${o}</option>`).join("")}</select>`:`<input id="f_${name}" name="${name}" type="${kind}" placeholder="${placeholder}" ${kind==="number"?'min="0" step="1"':''} required ${name==="customer"||name==="email"?'':' '}/>`}</div>`).join("");
- if(type==="sale")byId("f_customer").required=false;if(type==="customer")byId("f_email").required=false;
- byId("modalBackdrop").classList.remove("hidden");setTimeout(()=>byId("formFields").querySelector("input")?.focus(),50);
+ const spec=specs[type];$("modalTitle").textContent=spec.title;
+ $("formFields").innerHTML=spec.fields.map(f=>'<div class="field '+(f[0]==="description"?"full":"")+'"><label for="f_'+f[0]+'">'+f[1]+'</label>'+(f[2]==="select"?'<select id="f_'+f[0]+'" name="'+f[0]+'">'+f[3].map(o=>'<option value="'+o+'">'+o.replaceAll("_"," ")+"</option>").join("")+'</select>':'<input id="f_'+f[0]+'" name="'+f[0]+'" type="'+f[2]+'" placeholder="'+f[3]+'" '+(f[2]==="number"?'min="0" step="0.001"':"")+' '+(["customer","email"].includes(f[0])?"":"required")+' />')+'</div>').join("");
+ if(type==="sale")$("f_customer").required=false;if(type==="customer")$("f_email").required=false;
+ $("modalBackdrop").classList.remove("hidden");
 }
-function closeModal(){byId("modalBackdrop").classList.add("hidden")}
-function showToast(msg){const t=byId("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
+async function saveEntry(e){
+ e.preventDefault();const v=Object.fromEntries(new FormData(e.target).entries()),bid=activeBusiness.id;
+ try{
+  if(activeForm==="product"){
+   const r=await db.from("products").insert({business_id:bid,name:v.name.trim(),category:v.category||null,selling_price:+v.price,purchase_price:+(v.cost||0),stock_quantity:+v.stock,low_stock_threshold:+(v.threshold||5)});if(r.error)throw r.error;
+  }else if(activeForm==="customer"){
+   const r=await db.from("customers").insert({business_id:bid,name:v.name.trim(),phone:v.phone||null,email:v.email||null});if(r.error)throw r.error;
+  }else if(activeForm==="expense"){
+   const r=await db.from("expenses").insert({business_id:bid,title:v.description.trim(),category:v.category||null,amount:+v.amount,recorded_by:sessionUser.id});if(r.error)throw r.error;
+  }else if(activeForm==="sale"){
+   const qty=+v.quantity,amount=+v.amount;if(qty<=0||amount<=0)throw new Error("Quantity and amount must be greater than zero.");
+   const product=data.products.find(p=>p.name.toLowerCase()===v.item.trim().toLowerCase());
+   if(product&&product.stock<qty)throw new Error("Not enough stock. Update inventory first.");
+   let customerId=null;
+   if(v.customer.trim()){
+    const existing=data.customers.find(c=>c.name.toLowerCase()===v.customer.trim().toLowerCase());
+    if(existing)customerId=existing.id;else{const cr=await db.from("customers").insert({business_id:bid,name:v.customer.trim()}).select("id").single();if(cr.error)throw cr.error;customerId=cr.data.id;}
+   }
+   const ref="SB-"+Date.now().toString().slice(-10);
+   const sr=await db.from("sales").insert({business_id:bid,receipt_number:ref,customer_id:customerId,subtotal:amount,total:amount,payment_method:v.payment,payment_status:v.payment==="credit"?"pending":"paid",sold_by:sessionUser.id}).select("id").single();if(sr.error)throw sr.error;
+   const ir=await db.from("sale_items").insert({business_id:bid,sale_id:sr.data.id,item_name:v.item.trim(),product_id:product?.id||null,quantity:qty,unit_price:amount/qty,line_total:amount});if(ir.error)throw ir.error;
+   if(product){const ur=await db.from("products").update({stock_quantity:product.stock-qty}).eq("id",product.id).eq("business_id",bid);if(ur.error)throw ur.error;
+    const mr=await db.from("stock_movements").insert({business_id:bid,product_id:product.id,movement_type:"sale",quantity_change:-qty,note:"Sale "+ref,created_by:sessionUser.id});if(mr.error)throw mr.error;}
+  }
+  $("modalBackdrop").classList.add("hidden");await loadData();toast("Saved to your online business records.");
+ }catch(err){toast(err.message||"Could not save this record.");console.error(err);}
+}
 document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.goto)));
-byId("newSaleBtn").addEventListener("click",()=>openModal("sale"));
-byId("sectionAddBtn").addEventListener("click",()=>openModal(({inventory:"product",customers:"customer",expenses:"expense",sales:"sale"})[currentPage]));
-byId("closeModal").addEventListener("click",closeModal);byId("cancelModal").addEventListener("click",closeModal);
-byId("modalBackdrop").addEventListener("click",e=>{if(e.target===byId("modalBackdrop"))closeModal()});
-byId("mobileMenu").addEventListener("click",()=>byId("sidebar").classList.toggle("open"));
-byId("entryForm").addEventListener("submit",e=>{
- e.preventDefault();const v=Object.fromEntries(new FormData(e.target).entries());
- if(activeForm==="sale"){const amount=Number(v.amount);if(amount<=0)return showToast("Enter an amount greater than zero.");data.sales.push({ref:"SB-"+String(Date.now()).slice(-6),date:new Date().toISOString(),item:v.item,amount,payment:v.payment});if(v.customer.trim()){let c=data.customers.find(x=>x.name.toLowerCase()===v.customer.trim().toLowerCase());if(c)c.spent=(c.spent||0)+amount;else data.customers.push({name:v.customer.trim(),phone:"",email:"",spent:amount})}}
- if(activeForm==="product"){if(Number(v.price)<0||Number(v.stock)<0)return showToast("Price and quantity cannot be negative.");data.products.push({id:Date.now(),name:v.name,category:v.category,price:Number(v.price),stock:Number(v.stock)})}
- if(activeForm==="customer")data.customers.push({name:v.name,phone:v.phone,email:v.email,spent:0});
- if(activeForm==="expense"){if(Number(v.amount)<=0)return showToast("Enter an amount greater than zero.");data.expenses.push({date:new Date().toISOString(),category:v.category,description:v.description,amount:Number(v.amount)})}
- save();closeModal();renderOverview();if(currentPage!=="overview")renderSection();showToast("Record saved successfully.");
+$("newSaleBtn").addEventListener("click",()=>openModal("sale"));
+$("sectionAddBtn").addEventListener("click",()=>openModal(({inventory:"product",customers:"customer",expenses:"expense",sales:"sale"})[currentPage]));
+$("closeModal").addEventListener("click",()=>$("modalBackdrop").classList.add("hidden"));
+$("cancelModal").addEventListener("click",()=>$("modalBackdrop").classList.add("hidden"));
+$("modalBackdrop").addEventListener("click",e=>{if(e.target===$("modalBackdrop"))$("modalBackdrop").classList.add("hidden");});
+$("mobileMenu").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
+$("entryForm").addEventListener("submit",saveEntry);
+$("authToggle").addEventListener("click",()=>authModeSet(authMode==="signin"?"signup":"signin"));
+$("authForm").addEventListener("submit",async e=>{
+ e.preventDefault();const btn=$("authSubmit");btn.disabled=true;msg("authMessage","Please wait…",true);
+ try{
+  const email=$("authEmail").value.trim(),password=$("authPassword").value;
+  if(authMode==="signup"){const r=await db.auth.signUp({email,password});if(r.error)throw r.error;if(r.data.session)await startWorkspace(r.data.user);else msg("authMessage","Account created. Check your email to confirm it, then sign in.",true);}
+  else{const r=await db.auth.signInWithPassword({email,password});if(r.error)throw r.error;await startWorkspace(r.data.user);}
+ }catch(err){msg("authMessage",err.message);}finally{btn.disabled=false;}
 });
-byId("exportBtn").addEventListener("click",()=>{
+$("businessForm").addEventListener("submit",async e=>{
+ e.preventDefault();const btn=e.submitter;btn.disabled=true;msg("setupMessage","Creating your workspace…",true);
+ try{
+  const r=await db.from("businesses").insert({name:$("businessName").value.trim(),business_type:$("businessType").value.trim()||null,phone:$("businessPhone").value.trim()||null,address:$("businessAddress").value.trim()||null,owner_user_id:sessionUser.id}).select("id").single();
+  if(r.error)throw r.error;await startWorkspace(sessionUser);toast("Your business workspace is ready.");
+ }catch(err){msg("setupMessage",err.message);}finally{btn.disabled=false;}
+});
+$("setupSignOut").addEventListener("click",async()=>{await db.auth.signOut();showAuth();});
+$("signOutBtn").addEventListener("click",async()=>{await db.auth.signOut();data={products:[],sales:[],customers:[],expenses:[]};showAuth();});
+$("exportBtn").addEventListener("click",()=>{
  const rows=[["Type","Date","Description","Amount (RWF)"]];
- data.sales.forEach(s=>rows.push(["Sale",s.date,s.item,s.amount]));
- data.expenses.forEach(x=>rows.push(["Expense",x.date,x.description,x.amount]));
+ data.sales.forEach(s=>rows.push(["Sale",s.date,s.item,s.amount]));data.expenses.forEach(x=>rows.push(["Expense",x.date,x.description,x.amount]));
  const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\n");
- const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));const a=document.createElement("a");a.href=url;a.download="smart-biz-records.csv";a.click();URL.revokeObjectURL(url);showToast("Your CSV export is ready.");
+ const url=URL.createObjectURL(new Blob([csv],{type:"text/csv"})),a=document.createElement("a");a.href=url;a.download="smart-biz-records.csv";a.click();URL.revokeObjectURL(url);
 });
-renderOverview();
+db.auth.onAuthStateChange((_event,session)=>{if(session?.user)setTimeout(()=>startWorkspace(session.user).catch(e=>msg("authMessage",e.message)),0);else{sessionUser=null;activeBusiness=null;showAuth();}});
+(async()=>{authModeSet("signin");const r=await db.auth.getSession();if(r.error){msg("authMessage",r.error.message);return;}if(r.data.session){try{await startWorkspace(r.data.session.user);}catch(e){showAuth();msg("authMessage",e.message||"Could not load workspace.");}}else showAuth();})();
