@@ -1,7 +1,7 @@
 const SUPABASE_URL="https://qgnnzybeafqcsaqronpl.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY="sb_publishable_tVpz1JO5ix1EHu1kFqm9Bw_algtXmsu";
 const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
-let sessionUser=null,activeBusiness=null,currentPage="overview",activeForm="",authMode="signin";
+let sessionUser=null,activeBusiness=null,activeRole="staff",currentPage="overview",activeForm="",authMode="signin",teamMembers=[];
 let data={products:[],sales:[],customers:[],expenses:[]};
 const $=id=>document.getElementById(id);
 const money=n=>"RWF "+Number(n||0).toLocaleString("en-US");
@@ -31,6 +31,8 @@ async function startWorkspace(user){
  if(b.error)throw b.error;
  if(!b.data?.length){showSetup();return;}
  activeBusiness=b.data[0];
+ activeRole=m.data.find(x=>x.business_id===activeBusiness.id)?.role||"staff";
+ document.querySelector("[data-page=team]").classList.toggle("hidden",activeRole!=="owner");
  $("appShell").classList.remove("hidden");$("authScreen").classList.add("hidden");$("setupScreen").classList.add("hidden");
  document.querySelector(".profile strong").textContent=activeBusiness.name;
  document.querySelector(".profile small").textContent=(m.data.find(x=>x.business_id===activeBusiness.id)?.role||"member")+" workspace";
@@ -73,7 +75,7 @@ function renderOverview(){
  [{label:"In stock",count:data.products.filter(p=>p.stock>p.threshold).length,cls:""},{label:"Low stock",count:lowStock().filter(p=>p.stock>0).length,cls:"warning"},{label:"Out of stock",count:data.products.filter(p=>p.stock===0).length,cls:"danger"}].forEach(g=>{const row=document.createElement("div");row.innerHTML='<div class="stock-line-head"><span>'+g.label+'</span><strong>'+g.count+' products</strong></div><div class="progress"><span class="'+g.cls+'" style="width:'+(data.products.length?Math.max(3,g.count/data.products.length*100):0)+'%"></span></div>';stock.appendChild(row);});
  drawChart();
 }
-const pages={overview:["Overview","Here’s what’s happening with your business today."],sales:["Sales","Track transactions and keep your sales records organized."],inventory:["Inventory","Manage products, prices and available stock."],customers:["Customers","Keep useful customer details in one place."],expenses:["Expenses","Record and review your business spending."],reports:["Reports","A simple snapshot of your business performance."]};
+const pages={overview:["Overview","Here’s what’s happening with your business today."],sales:["Sales","Track transactions and keep your sales records organized."],inventory:["Inventory","Manage products, prices and available stock."],customers:["Customers","Keep useful customer details in one place."],expenses:["Expenses","Record and review your business spending."],reports:["Reports","A simple snapshot of your business performance."],team:["Team","Invite employees and manage their workspace roles."]};
 function navigate(page){
  currentPage=page;document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
  $("pageCrumb").textContent=pages[page][0];$("pageTitle").innerHTML=pages[page][0]+(page==="overview"?' <span class="wave">✦</span>':"");
@@ -81,8 +83,9 @@ function navigate(page){
  if(page!=="overview")renderSection();$("sidebar").classList.remove("open");
 }
 function renderSection(){
+ if(currentPage==="team"){renderTeam();return;}
  const titles={sales:"Sales transactions",inventory:"Product inventory",customers:"Customer directory",expenses:"Expense records",reports:"Business summary"};
- const desc={sales:"Every sale recorded in this workspace.",inventory:"Manage products, prices and available stock.",customers:"Your saved customer directory.",expenses:"Track the costs of running your business.",reports:"Totals calculated from your saved business records."};
+ const desc={sales:"Every sale recorded in this workspace.",inventory:"Manage products, prices and available stock.",customers:"Your saved customer directory.",expenses:"Track the costs of running your business.",reports:"Totals calculated from your saved business records.",team:"Invite employees and manage their workspace roles."};
  $("sectionTitle").textContent=titles[currentPage];$("sectionDescription").textContent=desc[currentPage];$("sectionAddBtn").classList.toggle("hidden",currentPage==="reports");
  const c=$("sectionContent");
  if(currentPage==="reports"){c.innerHTML='<div class="metric-grid"><article class="metric-card"><div class="metric-top">Revenue</div><div class="metric-value">'+money(total(data.sales))+'</div></article><article class="metric-card"><div class="metric-top">Expenses</div><div class="metric-value">'+money(total(data.expenses))+'</div></article><article class="metric-card"><div class="metric-top">Net (before other costs)</div><div class="metric-value">'+money(total(data.sales)-total(data.expenses))+'</div></article><article class="metric-card"><div class="metric-top">Transactions</div><div class="metric-value">'+data.sales.length+'</div></article></div><p style="color:#8994a6;font-size:11px">Figures are loaded from your online business records.</p>';return;}
@@ -97,6 +100,7 @@ function renderSection(){
 function openModal(type){
  activeForm=type;
  const specs={
+ team_invite:{title:"Invite an employee",fields:[["email","Employee email address","email","name@example.com"],["role","Assign role","select",["manager","cashier","inventory","staff"]]]},
  sale:{title:"Record a sale",fields:[["item","Product / item","text","e.g. Bottled water"],["quantity","Quantity","number","e.g. 1"],["amount","Total amount (RWF)","number","e.g. 500"],["payment","Payment method","select",["cash","mobile_money","bank_transfer","card","credit","other"]],["customer","Customer name (optional)","text","Customer name"]]},
  product:{title:"Add a product",fields:[["name","Product name","text","e.g. Sugar"],["category","Category","text","e.g. Groceries"],["price","Selling price (RWF)","number","e.g. 2000"],["cost","Purchase price (RWF)","number","e.g. 1500"],["stock","Opening quantity","number","e.g. 20"],["threshold","Low stock alert quantity","number","e.g. 5"]]},
  customer:{title:"Add a customer",fields:[["name","Customer name","text","Full name"],["phone","Phone number","tel","+250..."],["email","Email (optional)","email","name@example.com"]]},
@@ -107,10 +111,40 @@ function openModal(type){
  if(type==="sale")$("f_customer").required=false;if(type==="customer")$("f_email").required=false;
  $("modalBackdrop").classList.remove("hidden");
 }
+async function renderTeam(){
+ $("sectionTitle").textContent="Team members";
+ $("sectionDescription").textContent="Only the business owner can invite, change roles or remove employees.";
+ $("sectionAddBtn").classList.toggle("hidden",activeRole!=="owner");
+ const c=$("sectionContent");
+ if(activeRole!=="owner"){c.innerHTML='<div class="empty-box"><strong>Owner access required</strong>Ask your business owner to manage team members.</div>';return;}
+ c.innerHTML='<div class="empty-box">Loading team members…</div>';
+ try{
+  const r=await db.functions.invoke("manage-team",{body:{action:"list",business_id:activeBusiness.id}});
+  if(r.error)throw r.error;
+  teamMembers=r.data.members||[];
+  if(!teamMembers.length){c.innerHTML='<div class="empty-box"><strong>No team members yet</strong>Invite your first employee to get started.</div>';return;}
+  const roleLabel={owner:"Owner",manager:"Manager",cashier:"Cashier",inventory:"Inventory Manager",staff:"Staff"};
+  c.innerHTML='<div class="table-scroll"><table><thead><tr><th>EMAIL</th><th>ROLE</th><th>JOINED</th><th>ACTIONS</th></tr></thead><tbody>'+teamMembers.map(m=>'<tr><td>'+esc(m.email)+'</td><td>'+(m.role==="owner"?'<span class="status">Owner</span>':'<select class="search-input" style="min-width:145px;padding:7px" data-team-role="'+esc(m.id)+'"><option value="manager" '+(m.role==="manager"?"selected":"")+'>Manager</option><option value="cashier" '+(m.role==="cashier"?"selected":"")+'>Cashier</option><option value="inventory" '+(m.role==="inventory"?"selected":"")+'>Inventory Manager</option><option value="staff" '+(m.role==="staff"?"selected":"")+'>Staff</option></select>')+'</td><td>'+dateText(m.created_at)+'</td><td>'+(m.role==="owner"?'—':'<button class="text-button" data-team-update="'+esc(m.id)+'">Save role</button> <button class="text-button" style="color:#c45b55" data-team-remove="'+esc(m.id)+'">Remove</button>')+'</td></tr>').join("")+'</tbody></table></div>';
+  c.querySelectorAll("[data-team-update]").forEach(b=>b.addEventListener("click",async()=>{const id=b.dataset.teamUpdate;const role=c.querySelector('[data-team-role="'+id+'"]').value;await teamAction({action:"update_role",member_id:id,role},"Employee role updated.");}));
+  c.querySelectorAll("[data-team-remove]").forEach(b=>b.addEventListener("click",async()=>{const id=b.dataset.teamRemove;const member=teamMembers.find(x=>x.id===id);if(!confirm("Remove "+member.email+" from this business? Their login account will not be deleted."))return;await teamAction({action:"remove",member_id:id},"Employee removed from this business.");}));
+ }catch(err){c.innerHTML='<div class="empty-box"><strong>Could not load the team</strong>'+esc(err.message||"Please try again.")+'</div>';}
+}
+async function teamAction(payload,successMessage){
+ try{
+  const r=await db.functions.invoke("manage-team",{body:{business_id:activeBusiness.id,...payload}});
+  if(r.error)throw r.error;
+  if(r.data?.error)throw new Error(r.data.error);
+  toast(r.data?.message||successMessage);await renderTeam();
+ }catch(err){toast(err.message||"Team action failed.");}
+}
 async function saveEntry(e){
  e.preventDefault();const v=Object.fromEntries(new FormData(e.target).entries()),bid=activeBusiness.id;
  try{
-  if(activeForm==="product"){
+  if(activeForm==="team_invite"){
+   const r=await db.functions.invoke("manage-team",{body:{action:"invite",business_id:activeBusiness.id,email:v.email,role:v.role}});
+   if(r.error)throw r.error;if(r.data?.error)throw new Error(r.data.error);
+   $("modalBackdrop").classList.add("hidden");await renderTeam();toast(r.data?.message||"Employee invitation processed.");return;
+  }else if(activeForm==="product"){
    const r=await db.from("products").insert({business_id:bid,name:v.name.trim(),category:v.category||null,selling_price:+v.price,purchase_price:+(v.cost||0),stock_quantity:+v.stock,low_stock_threshold:+(v.threshold||5)});if(r.error)throw r.error;
   }else if(activeForm==="customer"){
    const r=await db.from("customers").insert({business_id:bid,name:v.name.trim(),phone:v.phone||null,email:v.email||null});if(r.error)throw r.error;
@@ -137,7 +171,7 @@ async function saveEntry(e){
 document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 document.querySelectorAll("[data-goto]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.goto)));
 $("newSaleBtn").addEventListener("click",()=>openModal("sale"));
-$("sectionAddBtn").addEventListener("click",()=>openModal(({inventory:"product",customers:"customer",expenses:"expense",sales:"sale"})[currentPage]));
+$("sectionAddBtn").addEventListener("click",()=>openModal(({inventory:"product",customers:"customer",expenses:"expense",sales:"sale",team:"team_invite"})[currentPage]));
 $("closeModal").addEventListener("click",()=>$("modalBackdrop").classList.add("hidden"));
 $("cancelModal").addEventListener("click",()=>$("modalBackdrop").classList.add("hidden"));
 $("modalBackdrop").addEventListener("click",e=>{if(e.target===$("modalBackdrop"))$("modalBackdrop").classList.add("hidden");});
