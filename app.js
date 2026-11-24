@@ -155,8 +155,12 @@ $("authForm").addEventListener("submit",async e=>{
 $("businessForm").addEventListener("submit",async e=>{
  e.preventDefault();const btn=e.submitter;btn.disabled=true;msg("setupMessage","Creating your workspace…",true);
  try{
-  const r=await db.from("businesses").insert({name:$("businessName").value.trim(),business_type:$("businessType").value.trim()||null,phone:$("businessPhone").value.trim()||null,address:$("businessAddress").value.trim()||null,owner_user_id:sessionUser.id}).select("id").single();
-  if(r.error)throw r.error;await startWorkspace(sessionUser);toast("Your business workspace is ready.");
+  const auth=await db.auth.getUser();
+  if(auth.error)throw auth.error;
+  if(!auth.data.user)throw new Error("Your sign-in session has expired. Please sign in again.");
+  sessionUser=auth.data.user;
+  const r=await db.from("businesses").insert({name:$("businessName").value.trim(),business_type:$("businessType").value.trim()||null,phone:$("businessPhone").value.trim()||null,address:$("businessAddress").value.trim()||null,owner_user_id:auth.data.user.id}).select("id").single();
+  if(r.error)throw r.error;await startWorkspace(auth.data.user);toast("Your business workspace is ready.");
  }catch(err){msg("setupMessage",err.message);}finally{btn.disabled=false;}
 });
 $("setupSignOut").addEventListener("click",async()=>{await db.auth.signOut();showAuth();});
