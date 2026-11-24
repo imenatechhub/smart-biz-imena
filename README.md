@@ -13,17 +13,27 @@ Smart Biz is a business-management workspace being developed for small and mediu
 - Record expenses
 - View basic totals and export sales/expense records to CSV
 
-## Try it
+## Deploy on Vercel
 
-Open the published GitHub Pages site after the first deployment completes:
+This repository is a static HTML, CSS, and JavaScript website. To import it into Vercel:
 
-https://imenatechhub.github.io/smart-biz-imena/
+1. Sign in to Vercel with GitHub.
+2. Choose **Add New → Project**.
+3. Import `imenatechhub/smart-biz-imena`.
+4. In Project Settings, select **Other** as the Framework Preset.
+5. Leave the Build Command empty.
+6. Set the Output Directory to `.` (the repository root).
+7. Deploy.
 
-The prototype currently stores demo records in the browser's local storage. Records are not yet synchronized between devices or users. Do not use it as the official record system for a real business yet.
+The homepage is `index.html`; its stylesheet and JavaScript are `styles.css` and `app.js`.
+
+## Data and limitations
+
+The prototype currently stores demo records in the browser's local storage. Records are not synchronized between devices or users. Do not use it as the official record system for a real business yet.
 
 ## Technology
 
-The current MVP is a static HTML, CSS, and JavaScript prototype. GitHub Actions publishes it to GitHub Pages whenever changes are pushed to `main`.
+The current MVP is a static HTML, CSS, and JavaScript prototype. Vercel can host it directly without a build step. GitHub remains the source-code repository.
 
 ## Planned next stages
 
