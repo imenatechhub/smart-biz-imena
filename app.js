@@ -159,8 +159,10 @@ $("businessForm").addEventListener("submit",async e=>{
   if(auth.error)throw auth.error;
   if(!auth.data.user)throw new Error("Your sign-in session has expired. Please sign in again.");
   sessionUser=auth.data.user;
-  const r=await db.from("businesses").insert({name:$("businessName").value.trim(),business_type:$("businessType").value.trim()||null,phone:$("businessPhone").value.trim()||null,address:$("businessAddress").value.trim()||null,owner_user_id:auth.data.user.id}).select("id").single();
-  if(r.error)throw r.error;await startWorkspace(auth.data.user);toast("Your business workspace is ready.");
+  const r=await db.rpc("create_business_workspace",{p_name:$("businessName").value.trim(),p_business_type:$("businessType").value.trim()||null,p_phone:$("businessPhone").value.trim()||null,p_address:$("businessAddress").value.trim()||null});
+  if(r.error)throw r.error;
+  await startWorkspace(auth.data.user);
+  toast("Your business workspace is ready.");
  }catch(err){msg("setupMessage",err.message);}finally{btn.disabled=false;}
 });
 $("setupSignOut").addEventListener("click",async()=>{await db.auth.signOut();showAuth();});
