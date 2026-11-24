@@ -12,7 +12,40 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app-shell">
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark">S<span>B</span></span><div><strong>smart<span>biz</span></strong><small>by IMENA Tech Hub</small></div></div>
+      <div class="eyebrow">YOUR BUSINESS, ORGANIZED</div>
+      <h1 id="authTitle">Welcome back</h1>
+      <p id="authSubtitle">Sign in to manage your business securely.</p>
+      <form id="authForm" class="auth-form">
+        <label>Email address<input id="authEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Password<input id="authPassword" type="password" autocomplete="current-password" minlength="6" required placeholder="At least 6 characters"></label>
+        <button id="authSubmit" class="button button-primary" type="submit">Sign in</button>
+      </form>
+      <p id="authMessage" class="auth-message" role="status"></p>
+      <button id="authToggle" class="auth-toggle" type="button">New to Smart Biz? Create an account</button>
+      <small class="auth-note">Your business information is protected by account-based database access.</small>
+    </div>
+  </section>
+  <section id="setupScreen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark">S<span>B</span></span><div><strong>smart<span>biz</span></strong><small>by IMENA Tech Hub</small></div></div>
+      <div class="eyebrow">LET'S SET UP YOUR WORKSPACE</div>
+      <h1>Create your business profile</h1>
+      <p>This is the business workspace your account will manage.</p>
+      <form id="businessForm" class="auth-form">
+        <label>Business name<input id="businessName" required minlength="2" maxlength="120" placeholder="e.g. Kigali Fresh Mart"></label>
+        <label>Business type<input id="businessType" placeholder="e.g. Retail, restaurant, salon"></label>
+        <label>Phone number<input id="businessPhone" type="tel" placeholder="+250..."></label>
+        <label>Business address<input id="businessAddress" placeholder="City, district or street"></label>
+        <button class="button button-primary" type="submit">Create my workspace</button>
+      </form>
+      <p id="setupMessage" class="auth-message" role="status"></p>
+      <button id="setupSignOut" class="auth-toggle" type="button">Sign out</button>
+    </div>
+  </section>
+  <div class="app-shell hidden" id="appShell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#" aria-label="Smart Biz home">
         <span class="brand-mark">S<span>B</span></span>
@@ -37,7 +70,7 @@
       <header class="topbar">
         <button class="mobile-menu" id="mobileMenu" aria-label="Open menu">☰</button>
         <div class="breadcrumb">Workspace <span>/</span> <strong id="pageCrumb">Overview</strong></div>
-        <div class="top-actions"><span class="today" id="todayLabel"></span><button class="icon-button" title="Notifications">♧</button><div class="top-avatar">SB</div></div>
+        <div class="top-actions"><span class="today" id="todayLabel"></span><button class="button button-light" id="signOutBtn" type="button">Sign out</button><div class="top-avatar">SB</div></div>
       </header>
 
       <section class="page-content">
@@ -78,6 +111,7 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
