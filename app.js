@@ -43,7 +43,7 @@ async function startWorkspace(user){
 }
 async function loadData(){
  const id=activeBusiness.id;
- const canSeeProducts=["owner","manager","cashier","inventory"].includes(activeRole);
+ const canSeeProducts=["owner","manager","inventory"].includes(activeRole);
  const canSeeSales=["owner","manager","cashier"].includes(activeRole);
  const canSeeCustomers=["owner","manager","cashier"].includes(activeRole);
  const canSeeExpenses=["owner","manager"].includes(activeRole);
