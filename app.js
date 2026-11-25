@@ -32,7 +32,10 @@ async function startWorkspace(user){
  if(!b.data?.length){showSetup();return;}
  activeBusiness=b.data[0];
  activeRole=m.data.find(x=>x.business_id===activeBusiness.id)?.role||"staff";
- document.querySelector("[data-page=team]").classList.toggle("hidden",activeRole!=="owner");
+ const rolePages={owner:["overview","sales","inventory","customers","expenses","reports","team"],manager:["overview","sales","inventory","customers","expenses","reports"],cashier:["overview","sales","customers"],inventory:["overview","inventory"],staff:["overview"]};
+ const allowedPages=rolePages[activeRole]||["overview"];
+ document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("hidden",!allowedPages.includes(b.dataset.page)));
+ if(!allowedPages.includes(currentPage))currentPage="overview";
  $("appShell").classList.remove("hidden");$("authScreen").classList.add("hidden");$("setupScreen").classList.add("hidden");
  document.querySelector(".profile strong").textContent=activeBusiness.name;
  document.querySelector(".profile small").textContent=(m.data.find(x=>x.business_id===activeBusiness.id)?.role||"member")+" workspace";
@@ -40,12 +43,17 @@ async function startWorkspace(user){
 }
 async function loadData(){
  const id=activeBusiness.id;
+ const canSeeProducts=["owner","manager","cashier","inventory"].includes(activeRole);
+ const canSeeSales=["owner","manager","cashier"].includes(activeRole);
+ const canSeeCustomers=["owner","manager","cashier"].includes(activeRole);
+ const canSeeExpenses=["owner","manager"].includes(activeRole);
+ const empty={data:[],error:null};
  const q=await Promise.all([
-  db.from("products").select("*").eq("business_id",id).eq("is_active",true).order("name"),
-  db.from("sales").select("*").eq("business_id",id).order("sold_at",{ascending:false}),
-  db.from("customers").select("*").eq("business_id",id).order("name"),
-  db.from("expenses").select("*").eq("business_id",id).order("expense_date",{ascending:false}),
-  db.from("sale_items").select("*").eq("business_id",id)
+  canSeeProducts?db.from("products").select("*").eq("business_id",id).eq("is_active",true).order("name"):Promise.resolve(empty),
+  canSeeSales?db.from("sales").select("*").eq("business_id",id).order("sold_at",{ascending:false}):Promise.resolve(empty),
+  canSeeCustomers?db.from("customers").select("*").eq("business_id",id).order("name"):Promise.resolve(empty),
+  canSeeExpenses?db.from("expenses").select("*").eq("business_id",id).order("expense_date",{ascending:false}):Promise.resolve(empty),
+  canSeeSales?db.from("sale_items").select("*").eq("business_id",id):Promise.resolve(empty)
  ]);
  for(const x of q)if(x.error)throw x.error;
  const items=q[4].data||[];
@@ -74,9 +82,16 @@ function renderOverview(){
  const stock=$("stockSummary");stock.innerHTML="";
  [{label:"In stock",count:data.products.filter(p=>p.stock>p.threshold).length,cls:""},{label:"Low stock",count:lowStock().filter(p=>p.stock>0).length,cls:"warning"},{label:"Out of stock",count:data.products.filter(p=>p.stock===0).length,cls:"danger"}].forEach(g=>{const row=document.createElement("div");row.innerHTML='<div class="stock-line-head"><span>'+g.label+'</span><strong>'+g.count+' products</strong></div><div class="progress"><span class="'+g.cls+'" style="width:'+(data.products.length?Math.max(3,g.count/data.products.length*100):0)+'%"></span></div>';stock.appendChild(row);});
  drawChart();
+ if(activeRole==="cashier"){
+  $("totalProducts").textContent="—";$("totalExpenses").textContent="—";$("lowStockText").textContent="—";
+  $("stockSummary").innerHTML='<p class="muted">Inventory details are restricted to inventory staff.</p>';
+  $("stockSummary").parentElement.classList.add("hidden");
+ }else{$("stockSummary").parentElement.classList.remove("hidden");}
 }
 const pages={overview:["Overview","Here’s what’s happening with your business today."],sales:["Sales","Track transactions and keep your sales records organized."],inventory:["Inventory","Manage products, prices and available stock."],customers:["Customers","Keep useful customer details in one place."],expenses:["Expenses","Record and review your business spending."],reports:["Reports","A simple snapshot of your business performance."],team:["Team","Invite employees and manage their workspace roles."]};
 function navigate(page){
+ const rolePages={owner:["overview","sales","inventory","customers","expenses","reports","team"],manager:["overview","sales","inventory","customers","expenses","reports"],cashier:["overview","sales","customers"],inventory:["overview","inventory"],staff:["overview"]};
+ if(!(rolePages[activeRole]||["overview"]).includes(page)){toast("Your employee role does not have access to this section.");return;}
  currentPage=page;document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
  $("pageCrumb").textContent=pages[page][0];$("pageTitle").innerHTML=pages[page][0]+(page==="overview"?' <span class="wave">✦</span>':"");
  $("pageSubtitle").textContent=pages[page][1];$("overviewPage").classList.toggle("hidden",page!=="overview");$("genericPage").classList.toggle("hidden",page==="overview");
@@ -152,18 +167,9 @@ async function saveEntry(e){
    const r=await db.from("expenses").insert({business_id:bid,title:v.description.trim(),category:v.category||null,amount:+v.amount,recorded_by:sessionUser.id});if(r.error)throw r.error;
   }else if(activeForm==="sale"){
    const qty=+v.quantity,amount=+v.amount;if(qty<=0||amount<=0)throw new Error("Quantity and amount must be greater than zero.");
-   const product=data.products.find(p=>p.name.toLowerCase()===v.item.trim().toLowerCase());
-   if(product&&product.stock<qty)throw new Error("Not enough stock. Update inventory first.");
-   let customerId=null;
-   if(v.customer.trim()){
-    const existing=data.customers.find(c=>c.name.toLowerCase()===v.customer.trim().toLowerCase());
-    if(existing)customerId=existing.id;else{const cr=await db.from("customers").insert({business_id:bid,name:v.customer.trim()}).select("id").single();if(cr.error)throw cr.error;customerId=cr.data.id;}
-   }
-   const ref="SB-"+Date.now().toString().slice(-10);
-   const sr=await db.from("sales").insert({business_id:bid,receipt_number:ref,customer_id:customerId,subtotal:amount,total:amount,payment_method:v.payment,payment_status:v.payment==="credit"?"pending":"paid",sold_by:sessionUser.id}).select("id").single();if(sr.error)throw sr.error;
-   const ir=await db.from("sale_items").insert({business_id:bid,sale_id:sr.data.id,item_name:v.item.trim(),product_id:product?.id||null,quantity:qty,unit_price:amount/qty,line_total:amount});if(ir.error)throw ir.error;
-   if(product){const ur=await db.from("products").update({stock_quantity:product.stock-qty}).eq("id",product.id).eq("business_id",bid);if(ur.error)throw ur.error;
-    const mr=await db.from("stock_movements").insert({business_id:bid,product_id:product.id,movement_type:"sale",quantity_change:-qty,note:"Sale "+ref,created_by:sessionUser.id});if(mr.error)throw mr.error;}
+  const existing=v.customer.trim()?data.customers.find(c=>c.name.toLowerCase()===v.customer.trim().toLowerCase()):null;
+  const sr=await db.rpc("record_sale",{p_business_id:bid,p_item_name:v.item.trim(),p_quantity:qty,p_total:amount,p_payment_method:v.payment,p_customer_id:existing?.id||null,p_customer_name:existing?null:(v.customer.trim()||null)});
+  if(sr.error)throw sr.error;
   }
   $("modalBackdrop").classList.add("hidden");await loadData();toast("Saved to your online business records.");
  }catch(err){toast(err.message||"Could not save this record.");console.error(err);}
