@@ -2,6 +2,7 @@ const SUPABASE_URL="https://qgnnzybeafqcsaqronpl.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY="sb_publishable_tVpz1JO5ix1EHu1kFqm9Bw_algtXmsu";
 const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 let sessionUser=null,activeBusiness=null,activeRole="staff",currentPage="overview",activeForm="",authMode="signin",teamMembers=[];
+let inventoryChannel=null,inventoryRefreshTimer=null;
 let data={products:[],sales:[],customers:[],expenses:[]};
 const $=id=>document.getElementById(id);
 const money=n=>"RWF "+Number(n||0).toLocaleString("en-US");
@@ -22,6 +23,21 @@ function authModeSet(mode){
 }
 function showAuth(){$("appShell").classList.add("hidden");$("setupScreen").classList.add("hidden");$("authScreen").classList.remove("hidden");}
 function showSetup(){$("appShell").classList.add("hidden");$("authScreen").classList.add("hidden");$("setupScreen").classList.remove("hidden");}
+function subscribeInventoryUpdates(){
+ if(inventoryChannel){db.removeChannel(inventoryChannel);inventoryChannel=null;}
+ if(!activeBusiness||!["owner","manager","inventory"].includes(activeRole))return;
+ const businessId=activeBusiness.id;
+ inventoryChannel=db.channel("inventory-live-"+businessId)
+  .on("postgres_changes",{event:"UPDATE",schema:"public",table:"products",filter:"business_id=eq."+businessId},()=>{
+   clearTimeout(inventoryRefreshTimer);
+   inventoryRefreshTimer=setTimeout(()=>loadData().catch(err=>console.error("Live inventory refresh failed:",err)),200);
+  })
+  .on("postgres_changes",{event:"INSERT",schema:"public",table:"products",filter:"business_id=eq."+businessId},()=>{
+   clearTimeout(inventoryRefreshTimer);
+   inventoryRefreshTimer=setTimeout(()=>loadData().catch(err=>console.error("Live inventory refresh failed:",err)),200);
+  })
+  .subscribe((status,error)=>{if(status==="CHANNEL_ERROR"||status==="TIMED_OUT")console.error("Inventory live updates:",status,error);});
+}
 async function startWorkspace(user){
  sessionUser=user;
  const m=await db.from("business_members").select("business_id,role").eq("user_id",user.id);
@@ -40,6 +56,7 @@ async function startWorkspace(user){
  document.querySelector(".profile strong").textContent=activeBusiness.name;
  document.querySelector(".profile small").textContent=(m.data.find(x=>x.business_id===activeBusiness.id)?.role||"member")+" workspace";
  await loadData();
+ subscribeInventoryUpdates();
 }
 async function loadData(){
  const id=activeBusiness.id;
